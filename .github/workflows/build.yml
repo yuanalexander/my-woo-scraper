@@ -1,0 +1,24 @@
+name: Win10_Woo_Packer
+
+on:
+  workflow_dispatch: 
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: 安装必要工具
+        run: |
+          pip install requests pandas beautifulsoup4 pyinstaller
+      - name: 开始打包成EXE
+        run: |
+          pyinstaller --onefile --name="Woo进货采集器" main.py
+      - name: 导出结果
+        uses: actions/upload-artifact@v3
+        with:
+          name: My_Windows_Tool
+          path: dist/*.exe
