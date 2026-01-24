@@ -6,7 +6,7 @@ import ssl
 from datetime import datetime
 from bs4 import BeautifulSoup
 
-# 针对 Windows 环境的 SSL 补丁
+# --- [系统环境补丁] ---
 try:
     _create_unverified_https_context = ssl._create_unverified_context
 except AttributeError:
@@ -36,12 +36,12 @@ def get_data(api_url):
 
 class SKUGenerator:
     def __init__(self):
-        # 严格执行: 从 CW-10000001 开始递增
-        self.counter = 10000000 
+        self.counter = 10000000 # 初始偏移，确保第一个是 CW-10000001
     def next_parent_sku(self):
         self.counter += 1
         return f"CW-{self.counter}"
 
+# --- [核心逻辑：精准匹配变体图] ---
 def process_to_woo_format(products, limit, sku_gen):
     extracted = []
     for p in products:
@@ -50,24 +50,26 @@ def process_to_woo_format(products, limit, sku_gen):
         
         parent_sku = sku_gen.next_parent_sku()
         
-        # 提取并清洗父级大图
-        all_imgs = [re.sub(r'(_\d+x\d+|_small|_medium|_large|_grande)\.', '.', img['src']) for img in p.get('images', [])]
-        images_str = ",".join(all_imgs)
-        # 获取父级主图作为备份
-        parent_main_img = all_imgs[0] if all_imgs else ""
+        # 1. 建立图片 ID 到 URL 的映射字典
+        # Shopify 内部通过 image_id 关联变体和图片
+        image_lookup = {}
+        all_imgs_urls = []
+        for img in p.get('images', []):
+            # 获取高清原图 URL
+            full_url = re.sub(r'(_\d+x\d+|_small|_medium|_large|_grande)\.', '.', img['src'])
+            image_lookup[img['id']] = full_url
+            all_imgs_urls.append(full_url)
+        
+        parent_main_img = all_imgs_urls[0] if all_imgs_urls else ""
+        images_str = ",".join(all_imgs_urls)
         
         full_desc = clean_html_for_woo(p.get('body_html', ''))
-
         options = p.get('options', [])
-        opt_configs = []
-        for i in range(3):
-            if i < len(options):
-                opt_configs.append({'name': options[i]['name'], 'values': ", ".join(options[i]['values'])})
-            else:
-                opt_configs.append({'name': '', 'values': ''})
+        opt_configs = [{'name': o['name'], 'values': ", ".join(o['values'])} for o in options]
+        while len(opt_configs) < 3: opt_configs.append({'name': '', 'values': ''})
 
-        # --- 1. 父产品行 (variable) ---
-        parent_row = {
+        # --- 父产品行 ---
+        extracted.append({
             'Type': 'variable',
             'SKU': parent_sku,
             'Name': p['title'],
@@ -78,57 +80,52 @@ def process_to_woo_format(products, limit, sku_gen):
             'Categories': p.get('product_type', ''),
             'Images': images_str,
             'Parent': '',
-            'Attribute 1 name': opt_configs[0]['name'],
-            'Attribute 1 value(s)': opt_configs[0]['values'],
-            'Attribute 1 visible': 1,
-            'Attribute 1 global': 1,
-            'Attribute 2 name': opt_configs[1]['name'],
-            'Attribute 2 value(s)': opt_configs[1]['values'],
-            'Attribute 2 visible': 1,
-            'Attribute 2 global': 1,
-            'Attribute 3 name': opt_configs[2]['name'],
-            'Attribute 3 value(s)': opt_configs[2]['values'],
-            'Attribute 3 visible': 1,
-            'Attribute 3 global': 1,
-        }
-        extracted.append(parent_row)
+            'Attribute 1 name': opt_configs[0]['name'], 'Attribute 1 value(s)': opt_configs[0]['values'],
+            'Attribute 1 visible': 1, 'Attribute 1 global': 1,
+            'Attribute 2 name': opt_configs[1]['name'], 'Attribute 2 value(s)': opt_configs[1]['values'],
+            'Attribute 2 visible': 1, 'Attribute 2 global': 1,
+            'Attribute 3 name': opt_configs[2]['name'], 'Attribute 3 value(s)': opt_configs[2]['values'],
+            'Attribute 3 visible': 1, 'Attribute 3 global': 1,
+        })
 
-        # --- 2. 子变体行 (variation) ---
+        # --- 子变体行：精准定位图片 ---
         if p.get('variants'):
             for idx, v in enumerate(p['variants'], 1):
                 variant_sku = f"{parent_sku}-{idx}"
                 
-                # 变体图逻辑：优先用变体图，没有则用父级主图
-                v_img = ""
-                if v.get('featured_image'):
-                    v_img = re.sub(r'(_\d+x\d+|_small|_medium|_large|_grande)\.', '.', v['featured_image']['src'])
-                else:
-                    v_img = parent_main_img # 自动补充缺失的变体图
+                # 逻辑修复：优先查找 image_id 对应的精准图片
+                v_image_id = v.get('image_id')
+                v_img_url = ""
                 
-                variant_row = {
+                if v_image_id and v_image_id in image_lookup:
+                    v_img_url = image_lookup[v_image_id]
+                elif v.get('featured_image'):
+                    # 备选：如果直接有 featured_image 对象
+                    v_img_url = re.sub(r'(_\d+x\d+|_small|_medium|_large|_grande)\.', '.', v['featured_image']['src'])
+                else:
+                    # 最后保底：使用父商品主图
+                    v_img_url = parent_main_img
+                
+                extracted.append({
                     'Type': 'variation',
                     'SKU': variant_sku,
                     'Name': f"{p['title']} - {v['title']}",
                     'Published': 1,
                     'In stock?': 1,
                     'Regular price': v['price'],
-                    'Images': v_img, # 确保变体一定有图
+                    'Images': v_img_url, # 这里现在是精准匹配的变体图
                     'Parent': parent_sku,
-                    'Attribute 1 name': opt_configs[0]['name'],
-                    'Attribute 1 value(s)': v.get('option1', '') if opt_configs[0]['name'] else '',
-                    'Attribute 2 name': opt_configs[1]['name'],
-                    'Attribute 2 value(s)': v.get('option2', '') if opt_configs[1]['name'] else '',
-                    'Attribute 3 name': opt_configs[2]['name'],
-                    'Attribute 3 value(s)': v.get('option3', '') if opt_configs[2]['name'] else '',
-                }
-                extracted.append(variant_row)
+                    'Attribute 1 name': opt_configs[0]['name'], 'Attribute 1 value(s)': v.get('option1', '') if opt_configs[0]['name'] else '',
+                    'Attribute 2 name': opt_configs[1]['name'], 'Attribute 2 value(s)': v.get('option2', '') if opt_configs[1]['name'] else '',
+                    'Attribute 3 name': opt_configs[2]['name'], 'Attribute 3 value(s)': v.get('option3', '') if opt_configs[2]['name'] else '',
+                })
     return extracted
 
 def main():
     while True:
         print("\n" + "="*50)
-        print("Shopify To WooCommerce v12.0 (图片补全版)")
-        print("系统支持: Win10 / Win11")
+        print("Shopify To WooCommerce v13.0 (变体图片精准匹配版)")
+        print("SKU: CW-10000001 | 系统: Win10/11 兼容")
         print("="*50)
         url_input = input("\n请输入 Shopify URL: ").strip()
         if not url_input: continue
@@ -138,7 +135,6 @@ def main():
         sku_gen = SKUGenerator()
         all_data = []
 
-        # 逻辑判断：单品 vs 分类
         if "/products/" in url_input and ".json" not in url_input:
             product_handle = url_input.split("/products/")[1].split("?")[0].split("#")[0]
             data = get_data(f"{base_url}/products/{product_handle}.json")
@@ -157,7 +153,7 @@ def main():
                 page += 1
 
         if all_data:
-            filename = f"woo_final_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            filename = f"woo_fixed_img_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
             pd.DataFrame(all_data).to_csv(filename, index=False, encoding='utf-8-sig')
             print(f"\n[成功] 文件已生成: {filename}")
         
