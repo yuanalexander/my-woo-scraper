@@ -1,31 +1,32 @@
-name: Win10_Woo_Packer
+name: Win10_Win11_Universal_Packer
 
 on:
   workflow_dispatch: 
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2019 # 使用 Windows 2019 确保最佳向下兼容性
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4 # 升级到 v4
+        uses: actions/checkout@v4
 
-      - name: 安装 Python
-        uses: actions/setup-python@v5 # 升级到 v5
+      - name: 设置 Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.9' # 使用 3.9 版本在旧系统上更稳定
 
-      - name: 安装必要工具
+      - name: 安装依赖库
         run: |
           python -m pip install --upgrade pip
           pip install requests pandas beautifulsoup4 pyinstaller lxml
 
-      - name: 开始打包成EXE
+      - name: 打包 EXE (Win10/11 兼容)
         run: |
-          pyinstaller --onefile --clean --name="Woo进货采集器" main.py
+          # --clean 清理临时文件，--onefile 打包成单个执行程序
+          pyinstaller --onefile --clean --name="Woo进货器_Win10_11" main.py
 
-      - name: 导出结果
-        uses: actions/upload-artifact@v4 # 关键：必须是 v4 才能运行
+      - name: 导出工具包
+        uses: actions/upload-artifact@v4
         with:
-          name: My_Windows_Tool
+          name: Universal_Scraper_Tool
           path: dist/*.exe
