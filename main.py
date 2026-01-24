@@ -6,7 +6,7 @@ import ssl
 from datetime import datetime
 from bs4 import BeautifulSoup
 
-# 针对旧版 Windows 的网络安全补丁
+# 针对 Windows 环境的 SSL 补丁
 try:
     _create_unverified_https_context = ssl._create_unverified_context
 except AttributeError:
@@ -25,8 +25,7 @@ def clean_html_for_woo(raw_html):
     return " ".join(cleaned.split())
 
 def get_data(api_url):
-    # 模拟最新版 Edge 浏览器，确保 Win10/11 访问流畅
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edge/120.0.0.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     try:
         response = requests.get(api_url, headers=headers, timeout=25)
         response.raise_for_status()
@@ -37,7 +36,7 @@ def get_data(api_url):
 
 class SKUGenerator:
     def __init__(self):
-        # 严格执行: SKU 从 CW-10000001 开始递增
+        # 严格执行: 从 CW-10000001 开始递增
         self.counter = 10000000 
     def next_parent_sku(self):
         self.counter += 1
@@ -50,8 +49,13 @@ def process_to_woo_format(products, limit, sku_gen):
         if parent_count >= limit: break
         
         parent_sku = sku_gen.next_parent_sku()
+        
+        # 提取并清洗父级大图
         all_imgs = [re.sub(r'(_\d+x\d+|_small|_medium|_large|_grande)\.', '.', img['src']) for img in p.get('images', [])]
         images_str = ",".join(all_imgs)
+        # 获取父级主图作为备份
+        parent_main_img = all_imgs[0] if all_imgs else ""
+        
         full_desc = clean_html_for_woo(p.get('body_html', ''))
 
         options = p.get('options', [])
@@ -62,7 +66,7 @@ def process_to_woo_format(products, limit, sku_gen):
             else:
                 opt_configs.append({'name': '', 'values': ''})
 
-        # 父产品 (variable)
+        # --- 1. 父产品行 (variable) ---
         parent_row = {
             'Type': 'variable',
             'SKU': parent_sku,
@@ -73,6 +77,7 @@ def process_to_woo_format(products, limit, sku_gen):
             'Regular price': p['variants'][0]['price'] if p['variants'] else '',
             'Categories': p.get('product_type', ''),
             'Images': images_str,
+            'Parent': '',
             'Attribute 1 name': opt_configs[0]['name'],
             'Attribute 1 value(s)': opt_configs[0]['values'],
             'Attribute 1 visible': 1,
@@ -88,12 +93,17 @@ def process_to_woo_format(products, limit, sku_gen):
         }
         extracted.append(parent_row)
 
-        # 子变体 (variation)
+        # --- 2. 子变体行 (variation) ---
         if p.get('variants'):
             for idx, v in enumerate(p['variants'], 1):
-                # 子 SKU 在父级基础上加后缀
                 variant_sku = f"{parent_sku}-{idx}"
-                v_img = re.sub(r'(_\d+x\d+|_small|_medium|_large|_grande)\.', '.', v['featured_image']['src']) if v.get('featured_image') else ""
+                
+                # 变体图逻辑：优先用变体图，没有则用父级主图
+                v_img = ""
+                if v.get('featured_image'):
+                    v_img = re.sub(r'(_\d+x\d+|_small|_medium|_large|_grande)\.', '.', v['featured_image']['src'])
+                else:
+                    v_img = parent_main_img # 自动补充缺失的变体图
                 
                 variant_row = {
                     'Type': 'variation',
@@ -102,7 +112,7 @@ def process_to_woo_format(products, limit, sku_gen):
                     'Published': 1,
                     'In stock?': 1,
                     'Regular price': v['price'],
-                    'Images': v_img if v_img else '',
+                    'Images': v_img, # 确保变体一定有图
                     'Parent': parent_sku,
                     'Attribute 1 name': opt_configs[0]['name'],
                     'Attribute 1 value(s)': v.get('option1', '') if opt_configs[0]['name'] else '',
@@ -117,7 +127,8 @@ def process_to_woo_format(products, limit, sku_gen):
 def main():
     while True:
         print("\n" + "="*50)
-        print("Shopify To WooCommerce v11.5 (Win10/11 兼容版)")
+        print("Shopify To WooCommerce v12.0 (图片补全版)")
+        print("系统支持: Win10 / Win11")
         print("="*50)
         url_input = input("\n请输入 Shopify URL: ").strip()
         if not url_input: continue
@@ -127,6 +138,7 @@ def main():
         sku_gen = SKUGenerator()
         all_data = []
 
+        # 逻辑判断：单品 vs 分类
         if "/products/" in url_input and ".json" not in url_input:
             product_handle = url_input.split("/products/")[1].split("?")[0].split("#")[0]
             data = get_data(f"{base_url}/products/{product_handle}.json")
@@ -145,7 +157,7 @@ def main():
                 page += 1
 
         if all_data:
-            filename = f"woo_ready_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            filename = f"woo_final_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
             pd.DataFrame(all_data).to_csv(filename, index=False, encoding='utf-8-sig')
             print(f"\n[成功] 文件已生成: {filename}")
         
