@@ -34,9 +34,9 @@ def get_data(api_url):
         print(f"请求失败: {e}")
         return None
 
-# --- [SKU 生成器] ---
 class SKUGenerator:
     def __init__(self, start_num):
+        # 严格执行: 从用户输入的数字开始递增
         self.counter = int(start_num) - 1
     def next_parent_sku(self):
         self.counter += 1
@@ -50,15 +50,10 @@ def process_to_woo_format(products, limit, sku_gen):
         
         parent_sku = sku_gen.next_parent_sku()
         
-        image_lookup = {}
-        all_imgs_urls = []
-        for img in p.get('images', []):
-            full_url = re.sub(r'(_\d+x\d+|_small|_medium|_large|_grande)\.', '.', img['src'])
-            image_lookup[img['id']] = full_url
-            all_imgs_urls.append(full_url)
-        
+        # 变体图片精准映射
+        image_lookup = {img['id']: re.sub(r'(_\d+x\d+|_small|_medium|_large|_grande)\.', '.', img['src']) for img in p.get('images', [])}
+        all_imgs_urls = list(image_lookup.values())
         parent_main_img = all_imgs_urls[0] if all_imgs_urls else ""
-        images_str = ",".join(all_imgs_urls)
         
         full_desc = clean_html_for_woo(p.get('body_html', ''))
         options = p.get('options', [])
@@ -69,7 +64,7 @@ def process_to_woo_format(products, limit, sku_gen):
         extracted.append({
             'Type': 'variable', 'SKU': parent_sku, 'Name': p['title'], 'Published': 1,
             'Description': full_desc, 'In stock?': 1, 'Regular price': p['variants'][0]['price'] if p['variants'] else '',
-            'Categories': p.get('product_type', ''), 'Images': images_str, 'Parent': '',
+            'Categories': p.get('product_type', ''), 'Images': ",".join(all_imgs_urls), 'Parent': '',
             'Attribute 1 name': opt_configs[0]['name'], 'Attribute 1 value(s)': opt_configs[0]['values'], 'Attribute 1 visible': 1, 'Attribute 1 global': 1,
             'Attribute 2 name': opt_configs[1]['name'], 'Attribute 2 value(s)': opt_configs[1]['values'], 'Attribute 2 visible': 1, 'Attribute 2 global': 1,
             'Attribute 3 name': opt_configs[2]['name'], 'Attribute 3 value(s)': opt_configs[2]['values'], 'Attribute 3 visible': 1, 'Attribute 3 global': 1,
@@ -78,12 +73,10 @@ def process_to_woo_format(products, limit, sku_gen):
         if p.get('variants'):
             for idx, v in enumerate(p['variants'], 1):
                 variant_sku = f"{parent_sku}-{idx}"
-                v_image_id = v.get('image_id')
-                v_img_url = image_lookup.get(v_image_id, parent_main_img) if v_image_id else parent_main_img
-                
+                v_img = image_lookup.get(v.get('image_id'), parent_main_img)
                 extracted.append({
                     'Type': 'variation', 'SKU': variant_sku, 'Name': f"{p['title']} - {v['title']}",
-                    'Published': 1, 'In stock?': 1, 'Regular price': v['price'], 'Images': v_img_url, 'Parent': parent_sku,
+                    'Published': 1, 'In stock?': 1, 'Regular price': v['price'], 'Images': v_img, 'Parent': parent_sku,
                     'Attribute 1 name': opt_configs[0]['name'], 'Attribute 1 value(s)': v.get('option1', '') if opt_configs[0]['name'] else '',
                     'Attribute 2 name': opt_configs[1]['name'], 'Attribute 2 value(s)': v.get('option2', '') if opt_configs[1]['name'] else '',
                     'Attribute 3 name': opt_configs[2]['name'], 'Attribute 3 value(s)': v.get('option3', '') if opt_configs[2]['name'] else '',
@@ -93,29 +86,28 @@ def process_to_woo_format(products, limit, sku_gen):
 def main():
     while True:
         print("\n" + "="*60)
-        print("Shopify To WooCommerce v15.0 (文件名 SKU 范围标注版)")
-        print("SKU 规则: CW-XXXXXXXX | 自动计算结束编号 | Win10/11 兼容")
+        print("Shopify To WooCommerce v15.3 (完整时间戳版)")
+        print("SKU 规则: CW-XXXXXXXX | 自动匹配变体图 | Win10/11 兼容")
         print("="*60)
         
         url_input = input("\n请输入 Shopify URL: ").strip()
         if not url_input: continue
 
         while True:
-            sku_start_input = input("请输入本次起始序号 (如 10000001): ").strip()
-            if sku_start_input.isdigit(): break
-            print("错误：请输入纯数字！")
+            sku_start = input("请输入起始序号 (例如 10000001): ").strip()
+            if sku_start.isdigit(): break
+            print("错误：请输入纯数字序号！")
 
         match = re.search(r'https?://([^/]+)', url_input)
         if not match: continue
         base_url = f"https://{match.group(1)}"
-        sku_gen = SKUGenerator(sku_start_input)
+        sku_gen = SKUGenerator(sku_start)
         all_data = []
 
         if "/products/" in url_input and ".json" not in url_input:
             product_handle = url_input.split("/products/")[1].split("?")[0].split("#")[0]
             data = get_data(f"{base_url}/products/{product_handle}.json")
-            if data and 'product' in data:
-                all_data = process_to_woo_format([data['product']], 1, sku_gen)
+            if data: all_data = process_to_woo_format([data['product']], 1, sku_gen)
         else:
             api_path = f"/collections/{url_input.split('/collections/')[1].split('/')[0]}/products.json" if "/collections/" in url_input else "/products.json"
             try:
@@ -126,28 +118,22 @@ def main():
                 data = get_data(f"{base_url}{api_path}?limit=250&page={page}")
                 if not data or not data.get('products'): break
                 all_data.extend(process_to_woo_format(data['products'], max_num, sku_gen))
-                print(f" 已成功处理 {len([i for i in all_data if i.get('Type') == 'variable'])} 个产品...")
+                print(f" 已处理 {len([i for i in all_data if i.get('Type') == 'variable'])} 个产品...")
                 page += 1
 
         if all_data:
-            # --- 新增逻辑：提取起始和结束的父 SKU ---
-            parent_skus = [row['SKU'] for row in all_data if row['Type'] == 'variable']
-            start_sku = parent_skus[0]
-            end_sku = parent_skus[-1]
-            timestamp = datetime.now().strftime("%H%M%S") # 仅保留时分秒，缩短文件名长度
-            
-            # 生成文件名：woo_CW-10000001_to_CW-10000010_143005.csv
-            filename = f"woo_{start_sku}_to_{end_sku}_{timestamp}.csv"
+            parents = [r['SKU'] for r in all_data if r['Type'] == 'variable']
+            # --- 修正逻辑：文件名格式 YYYYMMDD-HHMMSS ---
+            full_time_str = datetime.now().strftime("%Y%m%d-%H%M%S")
+            filename = f"woo_{parents[0]}_to_{parents[-1]}_{full_time_str}.csv"
             
             pd.DataFrame(all_data).to_csv(filename, index=False, encoding='utf-8-sig')
             print(f"\n[任务成功]")
             print(f"文件保存为: {filename}")
-            print(f"下次采集建议起始序号: {int(end_sku.replace('CW-', '')) + 1}")
-        else:
-            print("\n[失败] 未能采集到数据。")
+            next_suggest = int(parents[-1].replace('CW-', '')) + 1
+            print(f"建议下次起始序号: {next_suggest}")
         
-        choice = input("\n输入 'r' 重新开始，按其他任意键关闭程序: ").lower()
-        if choice != 'r': break
+        if input("\n输入 'r' 重新采集，其他键退出: ").lower() != 'r': break
 
 if __name__ == "__main__":
     main()
