@@ -1,11 +1,13 @@
 name: Win10_Win11_Universal_Packer
 
 on:
-  workflow_dispatch: 
+  workflow_dispatch: # 手动触发
 
 jobs:
   build:
-    runs-on: windows-2019 # 使用 Windows 2019 确保最佳向下兼容性
+    # 建议使用 windows-latest，它通常有更多的预留资源，减少排队时间
+    runs-on: windows-latest 
+    
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -13,20 +15,25 @@ jobs:
       - name: 设置 Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.9' # 使用 3.9 版本在旧系统上更稳定
+          python-version: '3.9'
+          # 开启缓存可以加快后续重复打包的速度
+          cache: 'pip' 
 
-      - name: 安装依赖库
+      - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
           pip install requests pandas beautifulsoup4 pyinstaller lxml
 
-      - name: 打包 EXE (Win10/11 兼容)
+      - name: 打包 EXE
         run: |
-          # --clean 清理临时文件，--onefile 打包成单个执行程序
-          pyinstaller --onefile --clean --name="Woo进货器_Win10_11" main.py
+          # 增加 --noconfirm 确保遇到覆盖时不等待确认
+          pyinstaller --onefile --clean --noconfirm --name="Woo_Scraper_v15" main.py
 
-      - name: 导出工具包
-        uses: actions/upload-artifact@v4
+      - name: 上传成品
+        # 必须使用 v4，解决你截图中的 deprecated 报错
+        uses: actions/upload-artifact@v4 
         with:
           name: Universal_Scraper_Tool
           path: dist/*.exe
+          # 设置保留天数为 1 天，减少 GitHub 存储压力，有时能提速
+          retention-days: 1
