@@ -1,11 +1,10 @@
 name: Win10_Win11_Universal_Packer
 
 on:
-  workflow_dispatch: # 手动触发
+  workflow_dispatch: 
 
 jobs:
   build:
-    # 建议使用 windows-latest，它通常有更多的预留资源，减少排队时间
     runs-on: windows-latest 
     
     steps:
@@ -16,8 +15,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.9'
-          # 开启缓存可以加快后续重复打包的速度
-          cache: 'pip' 
+          # 注意：这里删除了 cache: 'pip'，因为你没有 requirements.txt 文件
 
       - name: 安装依赖
         run: |
@@ -26,14 +24,11 @@ jobs:
 
       - name: 打包 EXE
         run: |
-          # 增加 --noconfirm 确保遇到覆盖时不等待确认
           pyinstaller --onefile --clean --noconfirm --name="Woo_Scraper_v15" main.py
 
       - name: 上传成品
-        # 必须使用 v4，解决你截图中的 deprecated 报错
         uses: actions/upload-artifact@v4 
         with:
           name: Universal_Scraper_Tool
           path: dist/*.exe
-          # 设置保留天数为 1 天，减少 GitHub 存储压力，有时能提速
           retention-days: 1
