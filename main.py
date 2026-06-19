@@ -27,17 +27,40 @@ def clean_html_for_woo(raw_html):
     return " ".join(cleaned.split())
 
 
-def get_data(api_url):
+def get_data(api_url, max_retries=3):
+    """带重试的 API 请求。遇到 429 限流或临时网络错误自动退避重试。"""
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
-    try:
-        response = requests.get(api_url, headers=headers, timeout=25)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        print(f"请求失败: {e}")
-        return None
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = requests.get(api_url, headers=headers, timeout=30)
+            if response.status_code == 429:
+                wait = 5 * attempt  # 5s, 10s, 15s
+                print(f"  ⚠️ 被限流(429)，等待 {wait} 秒后重试 (第{attempt}/{max_retries}次)...")
+                time.sleep(wait)
+                continue
+            if response.status_code == 430:
+                print(f"  ⚠️ Shopify 安全拦截(430)，该站点可能屏蔽了 API 访问。")
+                return None
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.Timeout:
+            if attempt < max_retries:
+                print(f"  ⚠️ 请求超时，重试中 (第{attempt}/{max_retries}次)...")
+                time.sleep(3)
+            else:
+                print(f"  ❌ 请求超时，已重试{max_retries}次仍失败。")
+                return None
+        except requests.exceptions.RequestException as e:
+            if attempt < max_retries:
+                wait = 2 ** attempt
+                print(f"  ⚠️ 网络错误: {e}，{wait}秒后重试 (第{attempt}/{max_retries}次)...")
+                time.sleep(wait)
+            else:
+                print(f"  ❌ 请求最终失败 [{response.status_code if 'response' in dir() else 'N/A'}]: {e}")
+                return None
+    return None
 
 
 class SKUGenerator:
@@ -257,14 +280,30 @@ def main():
 
             print(f"🔍 开始采集 (最多 {max_num} 个父产品)...")
             page = 1
-            while len([i for i in all_data if i.get('Type') == 'variable']) < max_num:
-                data = get_data(f"{base_url}{api_path}?limit=250&page={page}")
-                if not data or not data.get('products'):
+            while True:
+                parent_count = len([i for i in all_data if i.get('Type') == 'variable'])
+                if parent_count >= max_num:
                     break
-                all_data.extend(process_to_woo_format(data['products'], max_num, sku_gen))
-                current_count = len([i for i in all_data if i.get('Type') == 'variable'])
-                print(f"  📄 第{page}页 — 已采集 {current_count} 个产品...")
+
+                data = get_data(f"{base_url}{api_path}?limit=250&page={page}")
+                if not data:
+                    print(f"  ❌ 第{page}页请求失败，采集中断。")
+                    break
+                products = data.get('products')
+                if not products:
+                    print(f"  📭 第{page}页无产品，已到达目录末尾。")
+                    break
+
+                # 计算还需要多少个父产品
+                remaining = max_num - parent_count
+                all_data.extend(process_to_woo_format(products, remaining, sku_gen))
+                new_count = len([i for i in all_data if i.get('Type') == 'variable'])
+                print(f"  📄 第{page}页 — API返回{len(products)}个产品, 已采集 {new_count}/{max_num} 个父产品")
                 page += 1
+
+            parent_count = len([i for i in all_data if i.get('Type') == 'variable'])
+            if parent_count < max_num and page > 1:
+                print(f"  ⚠️ 注意: 请求了{max_num}个，但站点仅有{parent_count}个父产品。")
 
         # 保存结果
         if all_data:
