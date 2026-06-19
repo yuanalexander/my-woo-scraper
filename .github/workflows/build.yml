@@ -1,12 +1,12 @@
 name: Win10_Win11_Universal_Packer
 
 on:
-  workflow_dispatch: 
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-latest 
-    
+    runs-on: windows-latest
+
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -14,20 +14,19 @@ jobs:
       - name: 设置 Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
-          # 注意：这里删除了 cache: 'pip'，因为你没有 requirements.txt 文件
+          python-version: '3.11'
 
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
-          pip install requests pandas beautifulsoup4 pyinstaller lxml
+          pip install requests pandas beautifulsoup4 pyinstaller
 
       - name: 打包 EXE
         run: |
-          pyinstaller --onefile --clean --noconfirm --name="Woo_Scraper_v15" main.py
+          pyinstaller --onefile --clean --noconfirm --name="Woo_Scraper_v16" main.py
 
       - name: 上传成品
-        uses: actions/upload-artifact@v4 
+        uses: actions/upload-artifact@v4
         with:
           name: Universal_Scraper_Tool
           path: dist/*.exe
